@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudFormation template to launch an Amazon Linux 2 instance (t2.medium) with Terraform, Git, and SSM installed,
+  and with an IAM role that includes PowerUserAccess.
+
+Parameters:
+  LatestAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+    Description: Latest Amazon Linux 2 AMI ID
+
+Resources:
+  # IAM Role with SSM and PowerUser permissions
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/PowerUserAccess
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  # Security Group allowing SSH access (port 22)
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  # EC2 Instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.medium
+      ImageId: !Ref LatestAmi
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      UserData: !Base64
+        Fn::Sub: |
+          #!/bin/bash
+          # Update all packages
+          yum update -y
+
+          # Install Git
+          yum install -y git
+
+          # Install and start the SSM agent (Amazon Linux 2 usually includes it by default)
+          yum install -y amazon-ssm-agent
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+
+          # Install Terraform via HashiCorp repository
+          yum install -y yum-utils
+          yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+          yum install -y terraform
+
+          # Log Terraform version to verify installation
+          terraform version > /var/log/terraform-install.log
+
+Outputs:
+  InstanceId:
+    Description: The Instance ID of the launched EC2 instance
+    Value: !Ref EC2Instance
+  PublicIP:
+    Description: The public IP address of the EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp
